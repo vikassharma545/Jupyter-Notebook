@@ -1,4 +1,4 @@
-# 🚀 Instll Jupyter Notebook and Added to Context Menu
+# 🚀 Install Jupyter Notebook and Added to Context Menu (No Need for Anaconda)
 
 🌟 **Enhance your Workflow!** This repository contains scripts to add a "Open with Jupyter" context menu to Windows Explorer.
 

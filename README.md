@@ -4,10 +4,10 @@
 
 ## 🔥 Installation 
 
-1. Run the provided PowerShell command to clone the repo and set up the context menu:
+1. Run the provided PowerShell command in Admin Mode to clone the repo and set up the context menu:
 
    ```
-   $repoPath = "C:\JupyterContext"; if (Test-Path $repoPath) { Remove-Item -Recurse -Force $repoPath }; git clone git@github.com:vikassharma545/Jupyter-Notebook.git $repoPath; cd $repoPath; Start-Process cmd.exe -ArgumentList "/c setup_context_menu.bat" -Verb RunAs
+   $repoPath = "C:\JupyterContext"; if (Test-Path $repoPath) { Remove-Item -Recurse -Force $repoPath }; git clone https://github.com/vikassharma545/Jupyter-Notebook.git $repoPath; cd $repoPath; Start-Process cmd.exe -ArgumentList "/c setup_context_menu.bat" -Verb RunAs
    ```
 
 ## 🌈 Usage

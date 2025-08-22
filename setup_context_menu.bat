@@ -19,7 +19,7 @@ if '%errorlevel%' NEQ '0' (
 
 :: Install dependencies
 echo Installing Python dependencies...
-pip install notebook==6.5.7
+pip install notebook
 
 echo Installing Jupyter context menu...
 reg import open-with-jupyter.reg

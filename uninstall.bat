@@ -29,24 +29,28 @@ echo   Jupyter Context Menu - Uninstall
 echo ============================================
 echo.
 
-:: --- Remove Registry Entries ---
-echo [1/2] Removing context menu entries...
+:: --- Stop running Jupyter tray instances ---
+echo [1/3] Stopping running Jupyter instances...
+powershell -Command "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%jupyter_tray.py%%'\" -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
+echo    Done.
 
+:: --- Remove Registry Entries ---
+echo.
+echo [2/3] Removing context menu entries...
 reg delete "HKEY_CLASSES_ROOT\Directory\Background\shell\Open Jupyter" /f >nul 2>&1
 reg delete "HKEY_CLASSES_ROOT\Directory\shell\Open Jupyter" /f >nul 2>&1
-
 echo    Context menu entries removed.
 
 :: --- Optionally Uninstall Jupyter ---
 echo.
-echo [2/2] Jupyter Notebook package...
+echo [3/3] Jupyter Notebook package...
 echo.
-set /P "UNINSTALL_PIP=Do you also want to uninstall Jupyter Notebook? (Y/N): "
+set /P "UNINSTALL_PIP=Also uninstall Jupyter Notebook and dependencies? (Y/N): "
 if /I "!UNINSTALL_PIP!"=="Y" (
-    pip uninstall notebook -y
-    echo    Jupyter Notebook uninstalled.
+    pip uninstall notebook pystray Pillow -y >nul 2>&1
+    echo    Packages uninstalled.
 ) else (
-    echo    Jupyter Notebook was kept installed.
+    echo    Packages kept.
 )
 
 echo.

@@ -4,75 +4,193 @@ import subprocess
 import threading
 import webbrowser
 import re
+import logging
+import atexit
 from PIL import Image
 import pystray
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOG_PATH = os.path.join(SCRIPT_DIR, "jupyter_tray.log")
+
+
+def setup_logging():
+    """Configure logging BEFORE main() so crashes under pythonw are always captured."""
+    try:
+        if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > 1_000_000:
+            open(LOG_PATH, "w").close()
+    except OSError:
+        pass
+    logging.basicConfig(
+        filename=LOG_PATH,
+        level=logging.INFO,
+        format="%(asctime)s [PID %(process)d] %(message)s",
+    )
 
 
 def main():
     work_dir = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
-    script_dir = os.path.dirname(os.path.abspath(__file__))
 
-    # Load tray icon early so we fail fast if missing
-    icon_path = os.path.join(script_dir, "jupyter.ico")
-    if not os.path.exists(icon_path):
-        subprocess.Popen(
-            ["cmd", "/c", "echo", "ERROR: jupyter.ico not found", "&", "pause"],
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-        )
+    # Validate work directory exists
+    if not os.path.isdir(work_dir):
+        logging.error("Directory does not exist: %s", work_dir)
         return
-    image = Image.open(icon_path)
 
-    # Start jupyter notebook completely hidden
+    folder_name = os.path.basename(os.path.normpath(work_dir)) or "Root"
+    logging.info("Starting Jupyter for folder: %s", work_dir)
+
+    # --- Load tray icon ---
+    icon_path = os.path.join(SCRIPT_DIR, "jupyter.ico")
+    if not os.path.exists(icon_path):
+        logging.error("jupyter.ico not found at %s", icon_path)
+        return
     try:
-        proc = subprocess.Popen(
-            ["jupyter", "notebook", "--no-browser"],
+        image = Image.open(icon_path)
+    except Exception:
+        logging.exception("Failed to load icon: %s", icon_path)
+        return
+
+    # --- Find jupyter.exe via Python install path (not PATH dependent) ---
+    python_dir = os.path.dirname(sys.executable)
+    scripts_dir = os.path.join(python_dir, "Scripts")
+    jupyter_exe = os.path.join(scripts_dir, "jupyter.exe")
+    if not os.path.exists(jupyter_exe):
+        jupyter_exe = "jupyter"
+
+    # --- Start Jupyter server (hidden, auto-assigns port if busy) ---
+    def start_jupyter():
+        return subprocess.Popen(
+            [jupyter_exe, "notebook", "--no-browser"],
             cwd=work_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
+
+    try:
+        proc = start_jupyter()
     except FileNotFoundError:
-        subprocess.Popen(
-            ["cmd", "/c", "echo", "ERROR: jupyter not found on PATH", "&", "pause"],
-            creationflags=subprocess.CREATE_NEW_CONSOLE,
-        )
+        logging.error("jupyter executable not found at %s", jupyter_exe)
         return
 
-    # Capture jupyter URL from output
-    jupyter_url = [None]
+    logging.info("Jupyter process started (PID %d)", proc.pid)
 
-    def read_output():
-        for line in iter(proc.stdout.readline, b""):
-            text = line.decode("utf-8", errors="ignore")
-            if jupyter_url[0] is None:
-                match = re.search(r"(https?://\S+)", text)
-                if match:
-                    url = match.group(1).rstrip(")?.,")
-                    jupyter_url[0] = url
-                    webbrowser.open(url)
+    # --- Ensure cleanup on exit (covers crashes, logoff, etc.) ---
+    def cleanup():
+        if proc.poll() is None:
+            logging.info("Cleaning up Jupyter (PID %d)", proc.pid)
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
-    threading.Thread(target=read_output, daemon=True).start()
+    atexit.register(cleanup)
 
+    # --- State shared across threads ---
+    state = {"url": None, "port": None, "running": True}
+    tray_ref = [None]
+
+    # --- Read jupyter output to capture URL ---
+    def read_output(target_proc):
+        """Read stdout from a specific process instance."""
+        try:
+            for line in iter(target_proc.stdout.readline, b""):
+                text = line.decode("utf-8", errors="ignore")
+                if state["url"] is None:
+                    match = re.search(r"(https?://\S+)", text)
+                    if match:
+                        url = match.group(1).rstrip(")?.,")
+                        state["url"] = url
+                        port_match = re.search(r":(\d+)", url)
+                        if port_match:
+                            state["port"] = port_match.group(1)
+                        logging.info("Jupyter ready at %s", url)
+                        if tray_ref[0]:
+                            tray_ref[0].title = (
+                                f"Jupyter - {folder_name} (port {state['port']})"
+                            )
+                        webbrowser.open(url)
+        except Exception:
+            logging.exception("Error reading jupyter output")
+
+    # --- Monitor process health ---
+    def monitor_process(target_proc):
+        """Monitor a specific process instance for exit."""
+        target_proc.wait()
+        # Only update state if this is still the active process
+        if target_proc is proc:
+            state["running"] = False
+            logging.info("Jupyter exited (code %d)", target_proc.returncode)
+            if tray_ref[0]:
+                tray_ref[0].title = f"Jupyter - {folder_name} (stopped)"
+
+    threading.Thread(target=read_output, args=(proc,), daemon=True).start()
+    threading.Thread(target=monitor_process, args=(proc,), daemon=True).start()
+
+    # --- Tray menu actions ---
     def open_browser(icon, item):
-        url = jupyter_url[0] or "http://localhost:8888"
+        url = state["url"] or "http://localhost:8888"
         webbrowser.open(url)
 
-    def stop_server(icon, item):
-        proc.terminate()
+    def restart_server(icon, item):
+        nonlocal proc
+        # Stop old server
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        # Start new server
         try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+            proc = start_jupyter()
+            state["url"] = None
+            state["port"] = None
+            state["running"] = True
+            icon.title = f"Jupyter - {folder_name} (restarting...)"
+            logging.info("Jupyter restarted (PID %d)", proc.pid)
+            threading.Thread(target=read_output, args=(proc,), daemon=True).start()
+            threading.Thread(target=monitor_process, args=(proc,), daemon=True).start()
+        except Exception:
+            logging.exception("Failed to restart Jupyter")
+
+    def stop_server(icon, item):
+        cleanup()
         icon.stop()
 
+    # --- Dynamic menu text ---
+    def get_status(item):
+        if state["running"]:
+            port = state["port"] or "starting..."
+            return f"Port: {port}"
+        return "Server stopped"
+
+    def is_running(item):
+        return state["running"]
+
+    # --- Build tray icon (unique name per instance using PID) ---
     menu = pystray.Menu(
         pystray.MenuItem("Open Jupyter", open_browser, default=True),
+        pystray.MenuItem(get_status, None, enabled=False),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Restart Server", restart_server, visible=is_running),
         pystray.MenuItem("Stop Server", stop_server),
     )
 
-    icon = pystray.Icon("Jupyter Notebook", image, "Jupyter Notebook", menu)
-    icon.run()
+    tooltip = f"Jupyter - {folder_name} (starting...)"
+    tray = pystray.Icon(
+        f"Jupyter-{os.getpid()}",
+        image,
+        tooltip,
+        menu,
+    )
+    tray_ref[0] = tray
+    tray.run()
 
 
 if __name__ == "__main__":
-    main()
+    setup_logging()
+    try:
+        main()
+    except Exception:
+        logging.exception("jupyter_tray.py crashed")

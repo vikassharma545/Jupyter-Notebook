@@ -5,72 +5,69 @@
 [![No Anaconda](https://img.shields.io/badge/Anaconda-Not%20Required-brightgreen)](#)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Boost your workflow with a single right-click! This project adds an **"Open with Jupyter"** entry to the Windows Explorer context menu so you can launch Jupyter Notebook directly in any folder — no Anaconda required.
+Right-click any folder and instantly launch **Jupyter Notebook** — no Anaconda, no terminal, no hassle.
 
-The Jupyter server runs **completely hidden** — no terminal window, just a clean **system tray icon** (like Bluetooth) to manage the server.
+<p align="center">
+  <img src="jupyter.ico" alt="Jupyter Icon" width="80">
+</p>
+
+---
+
+## Features
+
+- **One-click launch** — Right-click any folder → "Open with Jupyter"
+- **No terminal clutter** — Jupyter runs hidden with a clean system tray icon
+- **Multiple folders** — Open Jupyter in different folders at the same time, each on its own port
+- **Easy control** — Right-click the tray icon to restart or stop the server
+- **Works everywhere** — No hardcoded paths, works on any Windows PC
 
 ---
 
 ## Requirements
 
-- Windows 10 or 11
-- [Python 3.10+](https://python.org) (make sure to check **"Add Python to PATH"** during installation)
-- [Git](https://git-scm.com/)
+- **Windows 10 or 11**
+- **[Python 3.10+](https://python.org)** — check **"Add Python to PATH"** during install
+- **[Git](https://git-scm.com/)**
 
 ---
 
 ## Installation
 
-Run this command in **PowerShell (Admin)**:
+Open **PowerShell as Administrator** and paste:
 
 ```powershell
 $repoPath = "C:\JupyterContext"; if (Test-Path $repoPath) { Remove-Item -Recurse -Force $repoPath }; git clone https://github.com/vikassharma545/Jupyter-Notebook.git $repoPath; cd $repoPath; Start-Process cmd.exe -ArgumentList "/c setup_context_menu.bat" -Verb RunAs
 ```
 
-> **Note:** You can change `C:\JupyterContext` to any path you prefer. The installer automatically detects the install location — no hardcoded paths.
+> You can change `C:\JupyterContext` to any folder you like.
 
-The installer will:
-1. Check that Python and pip are available
-2. Install Jupyter Notebook via pip
-3. Verify the installation works
-4. Add the right-click context menu to Windows Explorer
+That's it! The installer handles everything automatically.
 
 ---
 
-## Usage
+## How to Use
 
-- **Right-click on a folder** or **right-click on the desktop/folder background** and select **"Open with Jupyter"**
-- Your default browser will open with the Jupyter interface
-- A small Jupyter icon appears in the **system tray** (bottom-right, near clock)
-- **Double-click** the tray icon to reopen the browser
-- **Right-click** the tray icon and select **"Stop Server"** when done
+1. **Right-click** any folder or desktop background
+2. Click **"Open with Jupyter"**
+3. Your browser opens with Jupyter — a small icon appears in the system tray (near clock)
+
+| Action | How |
+|--------|-----|
+| Reopen browser | Double-click the tray icon |
+| Restart server | Right-click tray icon → **Restart Server** |
+| Stop server | Right-click tray icon → **Stop Server** |
+
+> You can run **multiple Jupyter servers** at once — each folder gets its own tray icon and port (8888, 8889, ...).
 
 ---
 
-## Uninstallation
+## Uninstall
 
-To remove the context menu, run `uninstall.bat` as Administrator from the install directory:
+Open **PowerShell as Administrator** and paste:
 
 ```powershell
-cd C:\JupyterContext
-Start-Process cmd.exe -ArgumentList "/c uninstall.bat" -Verb RunAs
+cd C:\JupyterContext; Start-Process cmd.exe -ArgumentList "/c uninstall.bat" -Verb RunAs
 ```
-
-This will:
-1. Remove the context menu entries from Windows Explorer
-2. Optionally uninstall the Jupyter Notebook pip package
-
----
-
-## Troubleshooting
-
-| Problem | Solution |
-|---------|----------|
-| **"Open with Jupyter" not appearing** | Restart Windows Explorer (or log out and back in) after installation |
-| **"jupyter is not recognized"** | Python Scripts directory is not on PATH. Reinstall Python with "Add to PATH" checked |
-| **Permission denied during setup** | Right-click PowerShell and select "Run as Administrator" |
-| **Icon not showing in context menu** | Verify `jupyter.ico` exists in the install directory |
-| **Folder paths with spaces fail** | This is fixed in the latest version. Re-run the installer to update |
 
 ---
 

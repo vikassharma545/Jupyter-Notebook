@@ -5,7 +5,7 @@ Windows Registry Editor Version 5.00
 "Icon"="C:\\JupyterContext\\jupyter.ico"
 
 [HKEY_CLASSES_ROOT\Directory\Background\shell\Open Jupyter\command]
-@="cmd /K cd %V && jupyter notebook"
+@="pythonw \"C:\\JupyterContext\\jupyter_tray.py\" \"%V\""
 
 
 [HKEY_CLASSES_ROOT\Directory\shell\Open Jupyter]
@@ -13,4 +13,4 @@ Windows Registry Editor Version 5.00
 "Icon"="C:\\JupyterContext\\jupyter.ico"
 
 [HKEY_CLASSES_ROOT\Directory\shell\Open Jupyter\command]
-@="cmd /K cd %1 && jupyter notebook"
+@="pythonw \"C:\\JupyterContext\\jupyter_tray.py\" \"%1\""

@@ -1,0 +1,8 @@
+*.vbs
+*.tmp
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+__pycache__/
+*.pyc

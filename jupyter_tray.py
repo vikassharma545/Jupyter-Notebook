@@ -6,15 +6,17 @@ import webbrowser
 import re
 import logging
 import atexit
-from urllib.request import Request, urlopen
 from PIL import Image
 import pystray
+from typing import Optional, Any
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-LOG_PATH = os.path.join(SCRIPT_DIR, "jupyter_tray.log")
+LOG_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.environ.get("TEMP", "C:\\")), "JupyterContext")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_PATH = os.path.join(LOG_DIR, "jupyter_tray.log")
 
 
-def setup_logging():
+def setup_logging() -> None:
     """Configure logging BEFORE main() so crashes under pythonw are always captured."""
     try:
         if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > 1_000_000:
@@ -28,7 +30,7 @@ def setup_logging():
     )
 
 
-def main():
+def main() -> None:
     work_dir = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
 
     # Validate work directory exists
@@ -58,7 +60,7 @@ def main():
         jupyter_exe = "jupyter"
 
     # --- Start Jupyter server (hidden, auto-assigns port if busy) ---
-    def start_jupyter():
+    def start_jupyter() -> subprocess.Popen:
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         return subprocess.Popen(
@@ -78,33 +80,27 @@ def main():
 
     logging.info("Jupyter process started (PID %d)", proc.pid)
 
-    # --- Graceful shutdown via Jupyter API (same as browser Quit button) ---
-    def shutdown_jupyter(p):
-        """Shutdown Jupyter gracefully via POST /api/shutdown, fallback to taskkill."""
+    # --- Graceful shutdown using Jupyter's own API ---
+    def stop_jupyter(p: subprocess.Popen) -> None:
+        """Shutdown Jupyter the same way the browser Quit button does."""
         if p.poll() is not None:
             return
         pid = p.pid
 
-        # Try the Jupyter API first (how the browser Quit button works)
+        # Use Jupyter's built-in shutdown (lazy import to avoid startup crash)
         try:
-            from notebook.notebookapp import list_running_servers
+            from notebook.notebookapp import list_running_servers, shutdown_server
             for server in list_running_servers():
                 if server["pid"] == pid:
-                    url = server["url"] + "api/shutdown"
-                    token = server["token"]
-                    req = Request(url, method="POST", data=b"")
-                    req.add_header("Authorization", "token " + token)
-                    urlopen(req, timeout=5)
-                    logging.info("Sent /api/shutdown to PID %d", pid)
-                    try:
-                        p.wait(timeout=10)
+                    stopped = shutdown_server(server, timeout=10)
+                    if stopped or p.poll() is not None:
                         logging.info("Jupyter (PID %d) shut down gracefully", pid)
                         return
-                    except subprocess.TimeoutExpired:
-                        logging.warning("Graceful shutdown timed out for PID %d", pid)
                     break
+        except ImportError:
+            logging.warning("notebook package not found, using force kill")
         except Exception:
-            logging.exception("API shutdown failed for PID %d", pid)
+            logging.exception("Graceful shutdown failed for PID %d", pid)
 
         # Fallback: force kill entire process tree
         if p.poll() is None:
@@ -123,23 +119,29 @@ def main():
                 pass
 
     # --- Ensure cleanup on exit (covers crashes, logoff, etc.) ---
-    def cleanup():
-        shutdown_jupyter(proc)
+    def cleanup() -> None:
+        stop_jupyter(proc)
 
     atexit.register(cleanup)
 
     # --- State shared across threads ---
-    state = {"url": None, "port": None, "running": True}
+    # user_action: True when Stop/Restart was clicked by user.
+    #   Prevents monitor_process from auto-removing the tray icon
+    #   when the server dies because WE told it to.
+    #   Only False = server exited on its own (browser Quit) → auto-remove icon.
+    state = {"url": None, "port": None, "running": True, "user_action": False}
     tray_ref = [None]
 
     # --- Read jupyter output to capture URL ---
-    def read_output(target_proc):
+    def read_output(target_proc: subprocess.Popen) -> None:
         """Read stdout from a specific process instance."""
         try:
             for line in iter(target_proc.stdout.readline, b""):
                 text = line.decode("utf-8", errors="ignore")
                 if state["url"] is None:
-                    match = re.search(r"(https?://\S+)", text)
+                    match = re.search(
+                        r"(https?://(?:localhost|127\.0\.0\.1)\S+)", text
+                    )
                     if match:
                         url = match.group(1).rstrip(")?.,")
                         state["url"] = url
@@ -156,53 +158,66 @@ def main():
             logging.exception("Error reading jupyter output")
 
     # --- Monitor process health ---
-    def monitor_process(target_proc):
+    def monitor_process(target_proc: subprocess.Popen) -> None:
         """Monitor a specific process instance for exit."""
         target_proc.wait()
-        # Only update state if this is still the active process
         if target_proc is proc:
             state["running"] = False
             logging.info("Jupyter exited (code %d)", target_proc.returncode)
-            if tray_ref[0]:
-                tray_ref[0].title = f"Jupyter - {folder_name} (stopped)"
+            # Auto-remove tray icon ONLY if server exited on its own
+            # (e.g. browser Quit button). Don't remove during Stop/Restart.
+            if not state["user_action"] and tray_ref[0]:
+                tray_ref[0].stop()
 
     threading.Thread(target=read_output, args=(proc,), daemon=True).start()
     threading.Thread(target=monitor_process, args=(proc,), daemon=True).start()
 
     # --- Tray menu actions ---
-    def open_browser(icon, item):
+    def open_browser(icon: pystray.Icon, item: pystray.MenuItem) -> None:
         url = state["url"] or "http://localhost:8888"
         webbrowser.open(url)
 
-    def restart_server(icon, item):
-        nonlocal proc
-        # Kill old server and all its children
-        shutdown_jupyter(proc)
-        # Start new server
-        try:
-            proc = start_jupyter()
-            state["url"] = None
-            state["port"] = None
-            state["running"] = True
-            icon.title = f"Jupyter - {folder_name} (restarting...)"
-            logging.info("Jupyter restarted (PID %d)", proc.pid)
-            threading.Thread(target=read_output, args=(proc,), daemon=True).start()
-            threading.Thread(target=monitor_process, args=(proc,), daemon=True).start()
-        except Exception:
-            logging.exception("Failed to restart Jupyter")
+    def restart_server(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        """Restart in a background thread so the tray icon stays responsive."""
+        def do_restart() -> None:
+            nonlocal proc
+            state["user_action"] = True
+            stop_jupyter(proc)
+            try:
+                proc = start_jupyter()
+                state["url"] = None
+                state["port"] = None
+                state["running"] = True
+                state["user_action"] = False
+                icon.title = f"Jupyter - {folder_name} (restarting...)"
+                logging.info("Jupyter restarted (PID %d)", proc.pid)
+                threading.Thread(
+                    target=read_output, args=(proc,), daemon=True
+                ).start()
+                threading.Thread(
+                    target=monitor_process, args=(proc,), daemon=True
+                ).start()
+            except Exception:
+                state["user_action"] = False
+                logging.exception("Failed to restart Jupyter")
+        threading.Thread(target=do_restart, daemon=True).start()
 
-    def stop_server(icon, item):
-        cleanup()
-        icon.stop()
+    def stop_server(icon: pystray.Icon, item: pystray.MenuItem) -> None:
+        """Stop in a background thread so the tray icon stays responsive."""
+        def do_stop() -> None:
+            state["user_action"] = True
+            cleanup()
+            icon.stop()
+        threading.Thread(target=do_stop, daemon=True).start()
 
     # --- Dynamic menu text ---
-    def get_status(item):
+    def get_status(item: pystray.MenuItem) -> str:
         if state["running"]:
             port = state["port"] or "starting..."
             return f"Port: {port}"
         return "Server stopped"
 
-    def is_running(item):
+    def is_running(item: pystray.MenuItem) -> bool:
         return state["running"]
 
     # --- Build tray icon (unique name per instance using PID) ---

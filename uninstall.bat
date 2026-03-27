@@ -34,12 +34,13 @@ echo [1/3] Stopping running Jupyter instances...
 powershell -Command "Get-CimInstance Win32_Process -Filter \"CommandLine LIKE '%%jupyter_tray.py%%'\" -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 echo    Done.
 
-:: --- Remove Registry Entries ---
+:: --- Remove Registry Entries & Logs ---
 echo.
-echo [2/3] Removing context menu entries...
+echo [2/3] Removing context menu entries and logs...
 reg delete "HKEY_CLASSES_ROOT\Directory\Background\shell\Open Jupyter" /f >nul 2>&1
 reg delete "HKEY_CLASSES_ROOT\Directory\shell\Open Jupyter" /f >nul 2>&1
-echo    Context menu entries removed.
+if exist "%LOCALAPPDATA%\JupyterContext" rmdir /s /q "%LOCALAPPDATA%\JupyterContext" >nul 2>&1
+echo    Context menu entries and logs removed.
 
 :: --- Optionally Uninstall Jupyter ---
 echo.
@@ -47,7 +48,7 @@ echo [3/3] Jupyter Notebook package...
 echo.
 set /P "UNINSTALL_PIP=Also uninstall Jupyter Notebook and dependencies? (Y/N): "
 if /I "!UNINSTALL_PIP!"=="Y" (
-    pip uninstall notebook pystray Pillow -y >nul 2>&1
+    python -m pip uninstall notebook pystray Pillow -y >nul 2>&1
     echo    Packages uninstalled.
 ) else (
     echo    Packages kept.

@@ -76,7 +76,7 @@ echo    pythonw: !PYTHONW_PATH!
 :: --- Install Dependencies ---
 echo.
 echo [2/5] Installing dependencies...
-pip install notebook==6.5.7 pystray Pillow
+python -m pip install notebook==6.5.7 pystray Pillow
 if !ERRORLEVEL! NEQ 0 (
     echo.
     echo ERROR: pip install failed.

@@ -6,6 +6,7 @@ import webbrowser
 import re
 import logging
 import atexit
+from urllib.request import Request, urlopen
 from PIL import Image
 import pystray
 
@@ -58,12 +59,15 @@ def main():
 
     # --- Start Jupyter server (hidden, auto-assigns port if busy) ---
     def start_jupyter():
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
         return subprocess.Popen(
             [jupyter_exe, "notebook", "--no-browser"],
             cwd=work_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            env=env,
         )
 
     try:
@@ -74,15 +78,53 @@ def main():
 
     logging.info("Jupyter process started (PID %d)", proc.pid)
 
+    # --- Graceful shutdown via Jupyter API (same as browser Quit button) ---
+    def shutdown_jupyter(p):
+        """Shutdown Jupyter gracefully via POST /api/shutdown, fallback to taskkill."""
+        if p.poll() is not None:
+            return
+        pid = p.pid
+
+        # Try the Jupyter API first (how the browser Quit button works)
+        try:
+            from notebook.notebookapp import list_running_servers
+            for server in list_running_servers():
+                if server["pid"] == pid:
+                    url = server["url"] + "api/shutdown"
+                    token = server["token"]
+                    req = Request(url, method="POST", data=b"")
+                    req.add_header("Authorization", "token " + token)
+                    urlopen(req, timeout=5)
+                    logging.info("Sent /api/shutdown to PID %d", pid)
+                    try:
+                        p.wait(timeout=10)
+                        logging.info("Jupyter (PID %d) shut down gracefully", pid)
+                        return
+                    except subprocess.TimeoutExpired:
+                        logging.warning("Graceful shutdown timed out for PID %d", pid)
+                    break
+        except Exception:
+            logging.exception("API shutdown failed for PID %d", pid)
+
+        # Fallback: force kill entire process tree
+        if p.poll() is None:
+            logging.info("Force killing process tree (PID %d)", pid)
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    capture_output=True,
+                )
+            except Exception:
+                p.kill()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+
     # --- Ensure cleanup on exit (covers crashes, logoff, etc.) ---
     def cleanup():
-        if proc.poll() is None:
-            logging.info("Cleaning up Jupyter (PID %d)", proc.pid)
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        shutdown_jupyter(proc)
 
     atexit.register(cleanup)
 
@@ -134,13 +176,8 @@ def main():
 
     def restart_server(icon, item):
         nonlocal proc
-        # Stop old server
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+        # Kill old server and all its children
+        shutdown_jupyter(proc)
         # Start new server
         try:
             proc = start_jupyter()
